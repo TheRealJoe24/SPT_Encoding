@@ -40,6 +40,7 @@ enum {
 
 enum {
     DD_PD=0,
+    DD_PB,
     DD_MD,
     DD_HF,
     DD_LB,
@@ -67,12 +68,85 @@ typedef struct {
 } decoder_t;
 
 typedef struct {
-
+    int props[2];
+    int motors[2];
+    int pH, temp, mast, pressure, sonar, battery, light, video_t;
+    int RF;
+    int limit[3];
+    char *hit;
+    int video_b;
+    char *speed;
+    char *depth;
 } state_t;
 
 void assembleCommand(command_t *, const char *);
 void runInputs(char *);
-void runCommand(command_t *command);
+void runCommand(state_t *state, command_t *command);
+
+void printCommand() {
+
+}
+
+void printStateChange(command_t *command, state_t *state) {
+    int sensor = command->sensor;
+    printf("UPDATE: ");
+    switch (sensor) {
+        case DD_PD:
+            printf("Left prop set to: %i, right prop set to: %i\n", state->props[0], state->props[1]);
+            break;
+        case DD_MD:
+            printf("Left motor set to: %i, right motor set to: %i\n", state->motors[0], state->motors[1]);
+            break;
+        case DD_HF:
+            printf("Hit flag changed to: %s\n", state->hit);
+            break;
+        case DD_LB:
+            printf("Light button changed to: %i\n", state->light);
+            break;
+        case DD_WT:
+            printf("Water temperature: %i\n", state->temp);
+            break;
+        case DD_LD:
+            printf("Limit switches: %i%i%i\n", state->limit[0], state->limit[1], state->limit[2]);
+            break;
+        case DD_DD:
+            printf("Limit switches: %i%i%i\n", state->limit[0], state->limit[1], state->limit[2]);
+            break;
+        case DD_SD:
+            printf("Depth data: %s\n", state->depth);
+            break;
+        case DD_VD:
+            printf("Velocity data: %s\n", state->speed);
+            break;
+        case DD_BD:
+            printf("Battery level: %i percent\n", state->battery);
+            break;
+        default:
+            break;
+    }
+}
+
+void initState(state_t *state) {
+    state->props[0] = 0;
+    state->props[1] = 99;
+    state->motors[0] = 69;
+    state->motors[1] = 50;
+    state->pH = 7;
+    state->speed = "0kn";
+    state->temp = 89;
+    state->mast = 76;
+    state->pressure = 1;
+    state->sonar = 0;
+    state->battery = 100;
+    state->light = 0;
+    state->video_t = 720;
+    state->RF = 1;
+    state->limit[0] = 0;
+    state->limit[1] = 0;
+    state->limit[2] = 0;
+    state->hit = "Miss";
+    state->depth = "30m";
+}
 
 uint8_t charToDataType(char c) {
     uint8_t dt = 0;
@@ -95,6 +169,7 @@ uint8_t charToDataType(char c) {
 
 uint8_t strToToken(char s[2]) {
     uint8_t tk = 0;
+    //printf("%s\n", s);
     switch (s[0]) {
         default:
             break;
@@ -124,7 +199,7 @@ uint8_t strToToken(char s[2]) {
             if (s[1] == 'D') tk = DD_VD; /* Velocity Data */
             break;
         case 'B':
-            if (s[1] == 'B') tk = DD_BD; /* Battery Data */
+            if (s[1] == 'D') tk = DD_BD; /* Battery Data */
             break;
     }
     return tk;
@@ -136,6 +211,8 @@ void runInputs(char *input_buf) {
     strcpy(buf, input_buf);         /* so we must copy the string into a dynamically allocated buffer */
     char *token = strtok(buf, "="); /* now we can tokenize the string, without a segmentation fault */
     command_t **commands = (command_t **)malloc(sizeof(command_t **));
+    state_t *state = (state_t*)malloc(sizeof(state_t));
+    initState(state);
     for (int i = 0; token != NULL; i++) {
         commands[i] = (command_t *)malloc(sizeof(command_t *));
         char *tk = (char*)malloc(strlen(token)+1); /* token + delim ('=') */
@@ -148,7 +225,8 @@ void runInputs(char *input_buf) {
         printf("Data Type ID: 0x%01X\n", commands[i]->dataType);
         printf("Data Sensor ID: 0x%01X\n", commands[i]->sensor);
         printf("DataSequence: %s\n", commands[i]->dataSequence);
-        runCommand(commands[i]);
+        runCommand(state, commands[i]);
+        printStateChange(commands[i], state);
         token = strtok(NULL, "=");
     }
 }
@@ -168,7 +246,7 @@ void assembleCommand(command_t *command, const char *buf) {
     char data_type = termination_buf[0]; /* the data type is stored in the first index of the termination sequence, lets store it */
     command->dataType = charToDataType(data_type); /* store the data type converted to an enum for use later */
 
-    char sensor[2]; /* 2 byte buffer containing the termination token EX. PD */
+    char *sensor = (char*)malloc(2); /* 2 byte buffer containing the termination token EX. PD */
     memcpy(sensor, (termination_buf+1), 2); /* store 2 bytes from the termination buffer in the sensor buffer */
     command->sensor = strToToken(sensor); /* convert the sensor buffer into an enum */
 
@@ -180,13 +258,15 @@ void assembleCommand(command_t *command, const char *buf) {
     memcpy(command->dataSequence, start, size); /* now we copy the buffer, given the offsets we calculated, into the data sequence allocated above. */
 }
 
-void runCommand(command_t *command) {
-    uint8_t opcode = (command->identifier & 0xF000) >> 12;
-    uint16_t word  = (command->identifier & 0x0FFF);
+void runCommand(state_t *state, command_t *command) {
+    uint8_t opcode = (command->identifier & 0xF000) >> 12; /* highest byte */
+    uint16_t word  = (command->identifier & 0x0FFF); /* lowest 3 bytes */
 
     size_t ds_len = strlen(command->dataSequence);
 
+    /* is the data sequence a single percentage value? */
     bool single_percentage = false;
+    /* are degrees in temperature or rotation? */
     bool rotation_degrees = false;
 
     char **args; /* pointer to strings */
@@ -224,42 +304,56 @@ void runCommand(command_t *command) {
             }
             break;
     }
-
     /* TODO: Error if input string is not to spec, to keep user informed */
     switch (opcode) {
         case 0x0:
             if (word == 0xB1 && !single_percentage) { /* 00B1 */
                 int p0 = atoi(args[0]); /* left percentage */
                 int p1 = atoi(args[1]); /* right percentage */
-                printf("\nSetting left motor to %i percent and right motor to %i percent!\n", p0, p1);
+                /* decide whether motor data or prop data should be changed */
+                if (command->sensor == DD_PD) {
+                    state->props[0] = p0;
+                    state->props[1] = p1;
+                } else if (command->sensor == DD_MD) {
+                    state->motors[0] = p0;
+                    state->motors[1] = p1;
+                }
             } else if (word == 0x01) { /* 0001 */
                 int temp = atoi(args[0]);
-                printf("\nWater temperature: %i%c\n", temp, args[1][0]);
+                state->temp = (temp << 8) | (args[1][0]); /* store the metric in the lower 8 bytes */
             }
             break;
         case 0xA:
             if (word == 0xB8 && single_percentage) { /* A0B8 */
                 int p = atoi(args[0]);
-                printf("\nSetting left motor to %i percent!\n", p);
+                if (command->sensor == DD_PD) {
+                    state->props[0] = p;
+                } else if (command->sensor == DD_MD) {
+                    state->motors[0] = p;
+                }
             } else if (word == 0xB9 && single_percentage) { /* A0B9 */
                 int p = atoi(args[0]);
-                printf("\nSetting right motor to %i percent!\n", p);
+                if (command->sensor == DD_PD) {
+                    state->props[1] = p;
+                } else if (command->sensor == DD_MD) {
+                    state->motors[1] = p;
+                }
             } else if (word == 0x65F) { /* A65F */
                 char *s = args[0];
-                printf("\nSeahunter speed: %s\n", s);
+                state->speed = s;
             } else if (word == 0xB41) { /* AB41 */
                 bool b = (bool)atoi(args[0]);
-                printf("\nLight button status: %s\n", (b ? "Pressed" : "Released"));
+                state->light = b;
             }
             break;
         case 0x8:
             if (word == 0x9C0) { /* 89C0 */
                 char *s = args[0];
-                printf("\nThe seahunter has %s hit", (strcmp(s, "HIT")==0 ? "been" : "not been"));
+                state->hit = (strcmp(s, "HIT") ? "Miss" : "Hit"); /* convert to more readable string */
             } else if (word == 0xB7A && rotation_degrees) { /* 8B7A */
                 int rot = atoi(args[1]);
                 if (rot >= 0 && rot <= 180) {
-                    printf("\nSonar rotation: %03i degrees\n", rot);
+                    state->sonar = rot;
                 }
             }
             break;
@@ -270,22 +364,21 @@ void runCommand(command_t *command) {
                 bool b1 = (bool)atoi(args[1]);
                 bool b2 = (bool)atoi(args[2]);
                 #define FORMAT_SWITCH(b) (b ? "Pressed" : "Released")
-                printf("\nLimit Switch 1 status: %s", FORMAT_SWITCH(b0));
-                printf("\nLimit Switch 2 status: %s", FORMAT_SWITCH(b1));
-                printf("\nLimit Switch 3 status: %s", FORMAT_SWITCH(b2));
-                printf("\nBinary ID: %i%i%i\n", b0, b1, b2);
+                state->limit[0] = b0; /* im not even going to try and say this is good code */
+                state->limit[1] = b1;
+                state->limit[2] = b2;
             }
             break;
         case 0x5:
             if (word == 0x4E3) { /* 54E3 */
                 char *str = args[0];
-                printf("\nThe distance to the seahunter is: %s\n", str);
+                state->depth = str;
             }
             break;
         case 0xE:
             if (word == 0x6D5 && single_percentage) { /* E6D5 */
                 int p = atoi(args[0]);
-                printf("\nThe percentage left in the battery is: %i percent\n", p);
+                state->battery = p;
             }
             break;
     }
