@@ -66,6 +66,14 @@ typedef struct {
     command_t *cmd;
 } decoder_t;
 
+typedef struct {
+
+} state_t;
+
+void assembleCommand(command_t *, const char *);
+void runInputs(char *);
+void runCommand(command_t *command);
+
 uint8_t charToDataType(char c) {
     uint8_t dt = 0;
     switch (c) {
@@ -122,9 +130,30 @@ uint8_t strToToken(char s[2]) {
     return tk;
 }
 
-void assembleCommand(command_t *command, const char *buf) {
-    printf("Received command: '%s'\n", buf);
+void runInputs(char *input_buf) {
+    size_t len = strlen(input_buf);
+    char *buf = (char*)malloc(len); /* strtok cannot tokenize compile-time strings (read-only memory) */
+    strcpy(buf, input_buf);         /* so we must copy the string into a dynamically allocated buffer */
+    char *token = strtok(buf, "="); /* now we can tokenize the string, without a segmentation fault */
+    command_t **commands = (command_t **)malloc(sizeof(command_t **));
+    for (int i = 0; token != NULL; i++) {
+        commands[i] = (command_t *)malloc(sizeof(command_t *));
+        char *tk = (char*)malloc(strlen(token)+1); /* token + delim ('=') */
+        strcpy(tk, token);
+        tk[strlen(token)] = '=';
+        assembleCommand(commands[i], tk); /* assemble each command individually */
+        printf("\n-------------------------------------------\n\n");
+        printf("\nReceived command: '%s'\n", tk);
+        printf("Command ID: 0x%04X\n", commands[i]->identifier);
+        printf("Data Type ID: 0x%01X\n", commands[i]->dataType);
+        printf("Data Sensor ID: 0x%01X\n", commands[i]->sensor);
+        printf("DataSequence: %s\n", commands[i]->dataSequence);
+        runCommand(commands[i]);
+        token = strtok(NULL, "=");
+    }
+}
 
+void assembleCommand(command_t *command, const char *buf) {
     size_t buf_len = strlen(buf); /* calculate the length of the input buffer. This will be used for future calculations */
 
     command->buf = (uint8_t*)malloc(buf_len*sizeof(uint8_t)); /* allocate the internal command buffer */
@@ -263,31 +292,13 @@ void runCommand(command_t *command) {
 }
 
 int main(int argc, char *argv[]) {
-
-    const char *inputs[] = {
-        "00B1100080PPD=",
-        "A0B9050PMD=",
-        "89C0HITSHF=",
-        "AB411BLB=",
-        "000160FDWT=",
-        "4DEF110BLD=",
-        "54E3100mSDD=",
-        "8B7A054DSD=",
-        "A65F002knSVD=",
-        "E6D5050PBD="
-    };
-
-    /* allocate the command buffer. Should be 32 bits as it this does not include the size of the buffers. 
-       Those should be allocated later */
-    command_t *command = (command_t*)malloc(sizeof(command_t));
-
-    for (int i = 0; i < 10; i++) {
-        printf("\n-------------------------------------------\n\n");
-        assembleCommand(command, inputs[i]);
-        printf("\nCommand ID: 0x%04X\n", command->identifier);
-        printf("Data Type ID: 0x%01X\n", command->dataType);
-        printf("Data Sensor ID: 0x%01X\n", command->sensor);
-        printf("DataSequence: %s\n", command->dataSequence);
-        runCommand(command);
+    if (argv[1] != NULL) {
+        FILE *fp = fopen(argv[1], "r");
+        const char *buf = (char*)malloc(1024); /* maximum input length */
+        fgets(buf, 1024, fp);
+        runInputs(buf);
+    } else {
+        printf("Please run the code with a path to an input file\n");
+        return -1;
     }
 }
