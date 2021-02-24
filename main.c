@@ -83,10 +83,11 @@ void assembleCommand(command_t *, const char *);
 void runInputs(char *);
 void runCommand(state_t *state, command_t *command);
 
-void printCommand() {
-
-}
-
+/**
+ * prints an update regarding the previous command and its resultant state
+ * @param  command - provides a pointer to the current command
+ * @param  state - provides a pointer to the current state of the system
+ */
 void printStateChange(command_t *command, state_t *state) {
     int sensor = command->sensor;
     printf("UPDATE: ");
@@ -126,6 +127,10 @@ void printStateChange(command_t *command, state_t *state) {
     }
 }
 
+/**
+ * initializes the state
+ * @param  state - provides a pointer to the current state of the system
+ */
 void initState(state_t *state) {
     state->props[0] = 0;
     state->props[1] = 99;
@@ -148,6 +153,10 @@ void initState(state_t *state) {
     state->depth = "30m";
 }
 
+/**
+ * takes a character and returns an integer containing the system data type
+ * @param  c - character containing the data type
+ */
 uint8_t charToDataType(char c) {
     uint8_t dt = 0;
     switch (c) {
@@ -167,6 +176,10 @@ uint8_t charToDataType(char c) {
     return dt;
 }
 
+/**
+ * take a two byte string and convert it into an integer token
+ * @param  s - two byte string
+ */
 uint8_t strToToken(char s[2]) {
     uint8_t tk = 0;
     //printf("%s\n", s);
@@ -231,6 +244,11 @@ void runInputs(char *input_buf) {
     }
 }
 
+/**
+ * assembles the given command into the command
+ * @param  command - provides a pointer to the command for buf to be assembled to
+ * @param  buf - provides a pointer to a string containing the command
+ */
 void assembleCommand(command_t *command, const char *buf) {
     size_t buf_len = strlen(buf); /* calculate the length of the input buffer. This will be used for future calculations */
 
@@ -258,6 +276,11 @@ void assembleCommand(command_t *command, const char *buf) {
     memcpy(command->dataSequence, start, size); /* now we copy the buffer, given the offsets we calculated, into the data sequence allocated above. */
 }
 
+/**
+ * runs the given command and stores the resultant state
+ * @param  state - provides a pointer to the current state of the system
+ * @param  command - provides a pointer to the current command
+ */
 void runCommand(state_t *state, command_t *command) {
     uint8_t opcode = (command->identifier & 0xF000) >> 12; /* highest byte */
     uint16_t word  = (command->identifier & 0x0FFF); /* lowest 3 bytes */
