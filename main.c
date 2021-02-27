@@ -68,10 +68,8 @@ typedef struct {
 
 uint8_t charToDataType(char c) {
     uint8_t dt = 0;
-    printf("%c",c);
     switch (c) {
         case 'P':
-            printf("hey");
             dt = DD_PERCENTAGE;
             break;
         case 'S':
@@ -96,7 +94,7 @@ uint8_t strToToken(char s[2]) {
             if (s[1] == 'D') tk = DD_PD; /* propellor data */
             break;
         case 'M':
-            if (s[1] == 'M') tk = DD_MD; /* motor data */
+            if (s[1] == 'D') tk = DD_MD; /* motor data */
             break;
         case 'H':
             if (s[1] == 'F') tk = DD_HF; /* hit flag data */
@@ -124,13 +122,10 @@ uint8_t strToToken(char s[2]) {
     return tk;
 }
 
-command_t *assembleCommand(const char *buf) {
+void assembleCommand(command_t *command, const char *buf) {
     printf("Received command: '%s'\n", buf);
 
     size_t buf_len = strlen(buf); /* calculate the length of the input buffer. This will be used for future calculations */
-    /* allocate the command buffer. Should be 32 bits as it this does not include the size of the buffers. 
-       Those should be allocated later */
-    command_t *command = (command_t*)malloc(sizeof(command_t));
 
     command->buf = (uint8_t*)malloc(buf_len*sizeof(uint8_t)); /* allocate the internal command buffer */
 
@@ -154,8 +149,6 @@ command_t *assembleCommand(const char *buf) {
     size_t size = end-start; /* the size would be the offset from the start to end addresses */
     command->dataSequence = (char*)malloc(size+1); /* allocate the data sequence buffer with the size in bytes */
     memcpy(command->dataSequence, start, size); /* now we copy the buffer, given the offsets we calculated, into the data sequence allocated above. */
-
-    return command; /* Now, return the generated command */
 }
 
 void runCommand(command_t *command) {
@@ -164,24 +157,31 @@ void runCommand(command_t *command) {
 
     size_t ds_len = strlen(command->dataSequence);
 
+    bool single_percentage = false;
+    bool rotation_degrees = false;
+
     char **args; /* pointer to strings */
     switch (command->dataType) {
         case DD_PERCENTAGE:
             args = malloc(2*sizeof(char*)); /* 2 buffers */
             args[0] = (char*)malloc(4); /* 4 bytes */
-            args[1] = (char*)malloc(4);
             memcpy(args[0], command->dataSequence, 3);
-            memcpy(args[1], command->dataSequence+3, 3);
+            if (ds_len > 3) { /* check for single or double percentage value */
+                args[1] = (char*)malloc(4);
+                memcpy(args[1], command->dataSequence+3, 3);
+            } else single_percentage = true;
             break;
         case DD_STRING:
             args = (char**)malloc(sizeof(char*));
             args[0] = (char*)malloc(32); /* arbitrary max size */
-            strcpy(args, command->dataSequence);
+            strcpy(args[0], command->dataSequence);
             break;
         case DD_BOOL:
             args = (char**)malloc(sizeof(char*));
-            args[0] = malloc(2); /* 1 byte for single character + null termination */
-            strcpy(args[0], command->dataSequence);
+            for (int i = 0; i < ds_len; i++) {
+                args[i] = (char*)malloc(2); /* 1 byte for single character + null termination */
+                memcpy(args[i], command->dataSequence+i, 1);
+            }
             break;
         case DD_DEGREES:
             args = (char**)malloc(sizeof(char*));
@@ -189,12 +189,17 @@ void runCommand(command_t *command) {
             args[1] = malloc(2); /* 1 for c or f and 1 for null termination */
             memcpy(args[0], command->dataSequence, ds_len-1); /* exlclude the f or c from the temp */
             strcpy(args[1], (command->dataSequence+ds_len)-1); /* only include the f or c */
+            if (args[1] != 'c' || args[1] != 'f') {
+                rotation_degrees = true;
+                free(args[1]); /* the arg is no longer necessary, free it */
+            }
             break;
     }
 
+    /* TODO: Error if input string is not to spec, to keep user informed */
     switch (opcode) {
         case 0x0:
-            if (word == 0xB1) { /* 00B1 */
+            if (word == 0xB1 && !single_percentage) { /* 00B1 */
                 int p0 = atoi(args[0]); /* left percentage */
                 int p1 = atoi(args[1]); /* right percentage */
                 printf("\nSetting left motor to %i percent and right motor to %i percent!\n", p0, p1);
@@ -204,47 +209,85 @@ void runCommand(command_t *command) {
             }
             break;
         case 0xA:
-            if (word == 0xB8) { /* A0B8 */
-
-            } else if (word == 0xB9) { /* A0B9 */
-                
+            if (word == 0xB8 && single_percentage) { /* A0B8 */
+                int p = atoi(args[0]);
+                printf("\nSetting left motor to %i percent!\n", p);
+            } else if (word == 0xB9 && single_percentage) { /* A0B9 */
+                int p = atoi(args[0]);
+                printf("\nSetting right motor to %i percent!\n", p);
             } else if (word == 0x65F) { /* A65F */
-                
+                char *s = args[0];
+                printf("\nSeahunter speed: %s\n", s);
             } else if (word == 0xB41) { /* AB41 */
-                
+                bool b = (bool)atoi(args[0]);
+                printf("\nLight button status: %s\n", (b ? "Pressed" : "Released"));
             }
             break;
         case 0x8:
             if (word == 0x9C0) { /* 89C0 */
-
-            } else if (word == 0xB7A) { /* 8B7A */
-                
+                char *s = args[0];
+                printf("\nThe seahunter has %s hit", (strcmp(s, "HIT")==0 ? "been" : "not been"));
+            } else if (word == 0xB7A && rotation_degrees) { /* 8B7A */
+                int rot = atoi(args[1]);
+                if (rot >= 0 && rot <= 180) {
+                    printf("\nSonar rotation: %03i degrees\n", rot);
+                }
             }
             break;
         case 0x4:
             if (word == 0xDEF) { /* 4DEF */
-
+                /* TODO: iterate through instead of hardcoding values */
+                bool b0 = (bool)atoi(args[0]); /* three limit switches */
+                bool b1 = (bool)atoi(args[1]);
+                bool b2 = (bool)atoi(args[2]);
+                #define FORMAT_SWITCH(b) (b ? "Pressed" : "Released")
+                printf("\nLimit Switch 1 status: %s", FORMAT_SWITCH(b0));
+                printf("\nLimit Switch 2 status: %s", FORMAT_SWITCH(b1));
+                printf("\nLimit Switch 3 status: %s", FORMAT_SWITCH(b2));
+                printf("\nBinary ID: %i%i%i\n", b0, b1, b2);
             }
             break;
         case 0x5:
             if (word == 0x4E3) { /* 54E3 */
-
+                char *str = args[0];
+                printf("\nThe distance to the seahunter is: %s\n", str);
             }
             break;
         case 0xE:
-            if (word == 0x6D5) { /* E6D5 */
-
+            if (word == 0x6D5 && single_percentage) { /* E6D5 */
+                int p = atoi(args[0]);
+                printf("\nThe percentage left in the battery is: %i percent\n", p);
             }
             break;
     }
 }
 
 int main(int argc, char *argv[]) {
-    command_t *command = assembleCommand("000186FDWT=");
-    printf("Command ID: 0x%04X\n", command->identifier);
-    printf("Data Type ID: 0x%01X\n", command->dataType);
-    printf("Data Sensor ID: 0x%01X\n", command->sensor);
-    printf("DataSequence: %s\n", command->dataSequence);
 
-    runCommand(command);
+    const char *inputs[] = {
+        "00B1100080PPD=",
+        "A0B9050PMD=",
+        "89C0HITSHF=",
+        "AB411BLB=",
+        "000160FDWT=",
+        "4DEF110BLD=",
+        "54E3100mSDD=",
+        "8B7A054DSD=",
+        "A65F002knSVD=",
+        "E6D5050PBD="
+    };
+
+    /* allocate the command buffer. Should be 32 bits as it this does not include the size of the buffers. 
+       Those should be allocated later */
+    command_t *command = (command_t*)malloc(sizeof(command_t));
+
+    for (int i = 0; i < 10; i++) {
+        printf("\n-------------------------------------------\n\n");
+        assembleCommand(command, inputs[i]);
+        printf("\nCommand ID: 0x%04X\n", command->identifier);
+        printf("Data Type ID: 0x%01X\n", command->dataType);
+        printf("Data Sensor ID: 0x%01X\n", command->sensor);
+        printf("DataSequence: %s\n", command->dataSequence);
+        runCommand(command);
+    }
 }
