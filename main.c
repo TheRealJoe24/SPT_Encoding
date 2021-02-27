@@ -188,7 +188,7 @@ void runCommand(command_t *command) {
             args[0] = malloc(5); /* 3 for temp, 1 for sign, 1 for null termination */
             args[1] = malloc(2); /* 1 for c or f and 1 for null termination */
             memcpy(args[0], command->dataSequence, ds_len-1); /* exlclude the f or c from the temp */
-            strcpy(args[0], (command->dataSequence+ds_len)-1); /* only include the f or c */
+            strcpy(args[1], (command->dataSequence+ds_len)-1); /* only include the f or c */
             break;
     }
 
@@ -200,7 +200,7 @@ void runCommand(command_t *command) {
                 printf("\nSetting left motor to %i percent and right motor to %i percent!\n", p0, p1);
             } else if (word == 0x01) { /* 0001 */
                 int temp = atoi(args[0]);
-                printf("\nWater temperature: %i%c\n", args[1]);
+                printf("\nWater temperature: %i%c\n", temp, args[1][0]);
             }
             break;
         case 0xA:
@@ -240,7 +240,7 @@ void runCommand(command_t *command) {
 }
 
 int main(int argc, char *argv[]) {
-    command_t *command = assembleCommand("00B1100080PPD=");
+    command_t *command = assembleCommand("000186FDWT=");
     printf("Command ID: 0x%04X\n", command->identifier);
     printf("Data Type ID: 0x%01X\n", command->dataType);
     printf("Data Sensor ID: 0x%01X\n", command->sensor);
